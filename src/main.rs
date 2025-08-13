@@ -1,7 +1,7 @@
 use std::env;
 use std::fs::File;
 use std::collections::HashMap;
-use std::io::{self, Read, Write, Seek, SeekFrom};
+use std::io::{Read, Write, Seek, SeekFrom};
 
 const BLOCKSIZE: usize = 2048; // $800 byte
 const DIRBLOCKS: usize = 2;
@@ -20,7 +20,8 @@ struct DirEntry {
     record_count: u8,       // RC
     allocation: Vec<u16>,   // AL-lista (blocknummer)
     readonly: bool,
-    system: bool
+    system: bool,
+    entry_number: u16,
 }
 
 impl DirEntry {
@@ -83,6 +84,8 @@ fn read_catalog(file: &mut File) -> std::io::Result<Vec<DirEntry>> {
         let s2 = entry[14];     // S2
         let record_count = entry[15];
 
+        let entry_number = (32 * s2 as u16) + extent as u16;
+
         let filetype: String = entry[9..12]
             .iter()
             .map(|b| (b & 0x7F) as char) // maskar bort T1'-bit och T2'-bit
@@ -110,7 +113,8 @@ fn read_catalog(file: &mut File) -> std::io::Result<Vec<DirEntry>> {
             record_count,
             allocation,
             readonly,
-            system
+            system,
+            entry_number
         });
     }
 
@@ -137,7 +141,13 @@ fn merge_extents(entries: Vec<DirEntry>) -> Vec<FileEntry> {
         file.extents.push(entry);
     }
 
-    files.into_values().collect()
+    let mut file_list: Vec<FileEntry> = files.into_values().collect();
+
+    for item in &mut file_list {
+        item.extents.sort_by_key(|extent| extent.entry_number);
+    }
+
+    file_list
 }
 
 fn main() -> std::io::Result<()> {
