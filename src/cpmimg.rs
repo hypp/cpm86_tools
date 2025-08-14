@@ -1,24 +1,27 @@
 
+use std::cmp::min;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write, Seek, SeekFrom};
+use anyhow::Result;
 
-const BLOCKSIZE: usize = 2048; // $800 byte
+const BLOCKSIZE: usize = 2048; // $800 bytes
 const DIRBLOCKS: usize = 2;
 const MAXDIR: usize = 128;
-const CATALOG_OFFSET: u64 = 0x2000; // katalogen börjar på $2000
+const CATALOG_OFFSET: u64 = 0x2000; // directory entries start at $2000
 const DATA_OFFSET: u64 = CATALOG_OFFSET+MAXDIR as u64*32;
 
 #[derive(Debug)]
 pub struct DirEntry {
+    directory_entry_idx: usize, // Index/Row in directory
     user_number: u8,       // UU
     filename: String,       // F1..F8
     filetype: String,       // T1..T3
-    extent: u8,             // EX, låg byte
-    s2: u8,                 // S2, hög byte
-    s1: u8,                 // reserverad
+    extent: u8,             // EX, low byte
+    s2: u8,                 // S2, hi byte
+    s1: u8,                 // reserved
     record_count: u8,       // RC
-    allocation: Vec<u16>,   // AL-lista (blocknummer)
+    allocation: Vec<u16>,   // AL-list (block numbers)
     readonly: bool,
     system: bool,
     entry_number: u16,
@@ -41,12 +44,13 @@ impl DirEntry {
 
 #[derive(Debug)]
 pub struct FileEntry {
+    first_directory_entry_idx: usize,
     user_number: u8,
     filename: String,
     filetype: String,
     readonly: bool,
     system: bool,
-    extents: Vec<DirEntry>,   // alla extenter för filen
+    extents: Vec<DirEntry>,   // all extents for the file
 }
 
 impl FileEntry {
@@ -55,18 +59,18 @@ impl FileEntry {
     }
 }
 
-pub fn read_catalog(disk: &mut File) -> std::io::Result<Vec<DirEntry>> {
+pub fn read_catalog(disk: &mut File) -> Result<Vec<DirEntry>> {
     let mut catalog = Vec::new();
 
     disk.seek(SeekFrom::Start(CATALOG_OFFSET))?;
     let mut buffer = vec![0u8; BLOCKSIZE * DIRBLOCKS];
     disk.read_exact(&mut buffer)?;
 
-    for i in 0..MAXDIR {
-        let offset = i * 32; // katalogpost = 32 byte
+    for idx in 0..MAXDIR {
+        let offset = idx * 32; // directory entry = 32 byte
         let entry = &buffer[offset..offset + 32];
 
-        // User number = 0xE5 => tom post
+        // User number = 0xE5 => empty directory entry
         let user_number = entry[0];
         if user_number == 0xE5 {
             continue;
@@ -74,7 +78,7 @@ pub fn read_catalog(disk: &mut File) -> std::io::Result<Vec<DirEntry>> {
 
         let filename = String::from_utf8_lossy(&entry[1..9]).trim().to_string();
 
-        // Kontrollera toppbiten i T1 för readonly/system (valfritt att spara)
+        // MSB is used as flag for readonly and system/hidden
         let t1 = entry[9];
         let readonly = t1 & 0x80 != 0;
         let system = entry[10] & 0x80 != 0;
@@ -88,7 +92,7 @@ pub fn read_catalog(disk: &mut File) -> std::io::Result<Vec<DirEntry>> {
 
         let filetype: String = entry[9..12]
             .iter()
-            .map(|b| (b & 0x7F) as char) // maskar bort T1'-bit och T2'-bit
+            .map(|b| (b & 0x7F) as char) // Remove MSB
             .collect();
 
         let mut allocation = Vec::new();
@@ -104,6 +108,7 @@ pub fn read_catalog(disk: &mut File) -> std::io::Result<Vec<DirEntry>> {
         }
 
         catalog.push(DirEntry {
+            directory_entry_idx: idx,
             user_number,
             filename,
             filetype,
@@ -114,7 +119,7 @@ pub fn read_catalog(disk: &mut File) -> std::io::Result<Vec<DirEntry>> {
             allocation,
             readonly,
             system,
-            entry_number
+            entry_number,
         });
     }
 
@@ -129,6 +134,7 @@ pub fn merge_extents(entries: Vec<DirEntry>) -> Vec<FileEntry> {
         let file = files
             .entry(key.clone())
             .or_insert(FileEntry {
+                first_directory_entry_idx: entry.directory_entry_idx,
                 user_number: entry.user_number,
                 filename: entry.filename.clone(),
                 filetype: entry.filetype.clone(),
@@ -136,12 +142,20 @@ pub fn merge_extents(entries: Vec<DirEntry>) -> Vec<FileEntry> {
                 system: false,
                 extents: Vec::new(),
             });
-        file.readonly |= entry.extent & 0x80 != 0; // sätt readonly om någon extent har det
-        file.system |= entry.extent & 0x80 != 0;   // sätt system om någon extent har det
+        file.first_directory_entry_idx = min(entry.directory_entry_idx,file.first_directory_entry_idx);
+        if entry.readonly {
+            // Set readonly if any entry has readonly
+            file.readonly = true;
+        }
+        if entry.system {
+            // Set system if any entry has system
+            file.system = true;
+        }
         file.extents.push(entry);
     }
 
     let mut file_list: Vec<FileEntry> = files.into_values().collect();
+    file_list.sort_by_key(|f| f.first_directory_entry_idx);
 
     for item in &mut file_list {
         item.extents.sort_by_key(|extent| extent.entry_number);
@@ -150,11 +164,10 @@ pub fn merge_extents(entries: Vec<DirEntry>) -> Vec<FileEntry> {
     file_list
 }
 
-pub fn copy_out(files: Vec<FileEntry>, source_file: &String, disk: &mut File, out: &mut File) -> std::io::Result<()> {
+pub fn copy_out(files: Vec<FileEntry>, source_file: &String, disk: &mut File, out: &mut File) -> Result<()> {
     let parts: Vec<&str> = source_file.split(|c| c == ':' || c == '.').collect();
     if parts.len() != 3 {
-        eprintln!("Invalid format, expected user:filename.filetype");
-        return Ok(());
+        anyhow::bail!("Invalid format, expected user:filename.filetype");
     }
 
     let user: u8 = parts[0].parse().unwrap_or(0);
@@ -172,12 +185,11 @@ pub fn copy_out(files: Vec<FileEntry>, source_file: &String, disk: &mut File, ou
         for extent in &file_entry.extents {
             for &block in &extent.allocation {
                 if block == 0 { continue; }
-                let offset = DATA_OFFSET + block as u64 * BLOCKSIZE as u64; // blockstorlek
+                let offset = DATA_OFFSET + block as u64 * BLOCKSIZE as u64;
                 disk.seek(SeekFrom::Start(offset))?;
 
-                // Läs exakt antal bytes som behövs
                 let remaining = total_size - written;
-                let read_size = std::cmp::min(BLOCKSIZE, remaining);
+                let read_size = min(BLOCKSIZE, remaining);
 
                 let mut buf = vec![0u8; read_size];
                 disk.read_exact(&mut buf)?;
@@ -193,10 +205,38 @@ pub fn copy_out(files: Vec<FileEntry>, source_file: &String, disk: &mut File, ou
             }
         }
 
-        println!("File {}:{}.{}, copied to test.bin", user, file_entry.filename, file_entry.filetype);
     } else {
-        eprintln!("File {} not found on disk", source_file);
+        anyhow::bail!("File {} not found in image", source_file);
     }
 
     Ok(())
 }
+
+
+pub fn list_directory(image_path: &String) -> Result<()> {
+    let mut disk = File::open(image_path)?;
+    let catalog = read_catalog(&mut disk)?;
+    let files: Vec<FileEntry> = merge_extents(catalog);
+
+    println!("Files in image '{}':", image_path);
+    println!("UID Name     Ext     Size Readonly System");
+    println!("------------------------------------------");
+    for entry in &files {
+        println!("{:>3} {:>8} {:>3} {:>8} {:>8} {:>6}", entry.user_number, entry.filename, entry.filetype, entry.file_size(), entry.readonly, entry.system);
+    }
+
+    Ok(())
+}
+
+pub fn copy_file_out(image_path: &String, cpm_file_name: &String, output_path: &String) -> Result<()> {
+    let mut disk = File::open(image_path)?;
+    let catalog = read_catalog(&mut disk)?;
+    let files: Vec<FileEntry> = merge_extents(catalog);
+
+    let mut out = File::create(output_path)?;
+    copy_out(files, cpm_file_name, &mut disk, &mut out)?;
+
+    Ok(())
+}
+
+

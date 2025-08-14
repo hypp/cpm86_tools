@@ -1,38 +1,92 @@
-use std::env;
-use std::fs::File;
+use clap::{Parser, Subcommand};
+use anyhow::Result;
 
 use cpm86_tools::cpmimg;
 
+#[derive(Parser)]
+#[clap(version, about = "A tool for COMPIS CP/M 86 raw floppy images.")]
+struct Cli {
+    #[clap(subcommand)]
+    command: Commands,
+}
 
-fn main() -> std::io::Result<()> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 4 {
-        eprintln!("Usage: {} <diskimage> <user:filename.filetype> <destination>", args[0]);
-        return Ok(());
+#[derive(Subcommand)]
+enum Commands {
+    /// Create a new empty floppy image: 512 bytes per sector, 8 sectors per track, 84 tracks.
+    /// Ex: cpmtool create mycompis.img
+    Create {
+        /// Path to the new floppy image.
+        #[clap(name = "IMAGE_FILE")]
+        image_path: String,
+    },
+    /// Copy a file from local filesystem to the floppy image.
+    /// Ex: cpmtool copyin mycompis.img myprog.bin 0:myprog.cmd
+    Copyin {
+        /// Path to the floppy image
+        #[clap(name = "IMAGE_FILE")]
+        image_path: String,
+        /// Path to file in local filesystem
+        #[clap(name = "SOURCE_FILE")]
+        source_path: String,
+        /// User:Name.Type of destination file in image
+        #[clap(name = "CPM_FILE")]
+        cpm_file_name: String,
+    },
+    /// Copy a file from the floppy image to the local filesystem.
+    /// Ex: cpmtool copyout mycompis.img 0:myprog.cmd myprog.bin
+    Copyout {
+        /// Path to the floppy image
+        #[clap(name = "IMAGE_FILE")]
+        image_path: String,
+        /// User:Name.Type of source file in image
+        #[clap(name = "CPM_FILE")]
+        cpm_file_name: String,
+        /// Path to file in local filesystem
+        #[clap(name = "TARGET_FILE")]
+        output_path: String,
+    },
+    /// Delete a file from the floppy image.
+    /// Ex: cpmtool delete mycompis.img 0:myprog.cmd
+    Delete {
+        /// Path to the floppy image
+        #[clap(name = "IMAGE_FILE")]
+        image_path: String,
+        /// User:Name.Type of file in image
+        #[clap(name = "CPM_FILE")]
+        cpm_file_name: String,
+    },
+    /// List content of floppy image.
+    /// Ex: cpmtool list mycompis.img
+    List {
+        /// Path to the floppy image
+        #[clap(name = "IMAGE_FILE")]
+        image_path: String,
+    },
+}
+
+
+fn main() -> Result<()> {
+
+    let cli = Cli::parse();
+
+    match &cli.command {
+        Commands::Create { image_path } => {
+            println!("TODO: Create new image '{}'.", image_path);
+        }
+        Commands::Copyin { image_path, source_path, cpm_file_name } => {
+            println!("TODO: Copy '{}' to '{}' image '{}'.", source_path, cpm_file_name, image_path);
+        }
+        Commands::Copyout { image_path, cpm_file_name, output_path } => {
+            println!("TODO: Copy '{}' from image '{}' to '{}'.", cpm_file_name, image_path, output_path);
+            cpmimg::copy_file_out(image_path, cpm_file_name, output_path);
+        }
+        Commands::Delete { image_path, cpm_file_name } => {
+            println!("TODO: Delete '{}' from image '{}'.", cpm_file_name, image_path);
+        }
+        Commands::List { image_path } => {
+            cpmimg::list_directory(image_path)?;
+        }
     }
-
-    let diskimage = &args[1];
-    let source_file = &args[2];
-    let destination_file = &args[3];
-
-    // Parse argument
-    let parts: Vec<&str> = source_file.split(|c| c == ':' || c == '.').collect();
-    if parts.len() != 3 {
-        eprintln!("Invalid format, expected user:filename.filetype");
-        return Ok(());
-    }
-
-    let mut disk = File::open(diskimage)?;
-    let catalog = cpmimg::read_catalog(&mut disk)?;
-
-    let files: Vec<cpmimg::FileEntry> = cpmimg::merge_extents(catalog);
-    println!("Filer på disken '{}':", diskimage);
-    for entry in &files {
-        println!("{:?} {}", entry, entry.file_size());
-    }
-
-    let mut out = File::create(destination_file)?;
-    cpmimg::copy_out(files, source_file, &mut disk, &mut out)?;
 
     Ok(())
 }
