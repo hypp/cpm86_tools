@@ -5,6 +5,10 @@ use std::fs::File;
 use std::io::{Read, Write, Seek, SeekFrom};
 use anyhow::Result;
 
+const NUM_TRACKS: usize = 84;
+const NUM_SECTORS_PER_TRACK: usize = 8;
+const NUM_BYTES_PER_SECTOR: usize = 512;
+
 const BLOCKSIZE: usize = 2048; // $800 bytes
 const DIRBLOCKS: usize = 2;
 const MAXDIR: usize = 128;
@@ -164,7 +168,7 @@ pub fn merge_extents(entries: Vec<DirEntry>) -> Vec<FileEntry> {
     file_list
 }
 
-pub fn copy_out(files: Vec<FileEntry>, source_file: &String, disk: &mut File, out: &mut File) -> Result<()> {
+pub fn copy_out(files: Vec<FileEntry>, source_file: &str, disk: &mut File, out: &mut File) -> Result<()> {
     let parts: Vec<&str> = source_file.split(|c| c == ':' || c == '.').collect();
     if parts.len() != 3 {
         anyhow::bail!("Invalid format, expected user:filename.filetype");
@@ -212,8 +216,24 @@ pub fn copy_out(files: Vec<FileEntry>, source_file: &String, disk: &mut File, ou
     Ok(())
 }
 
+pub fn create_image(image_path: &str) -> Result<()> {
+    let mut out = File::create(image_path)?;
+    let mut buf = [0u8; NUM_BYTES_PER_SECTOR];
+    for i in 0..buf.len() {
+        // e5 is used as empty directory entry
+        buf[i] = 0xe5;
+    }
 
-pub fn list_directory(image_path: &String) -> Result<()> {
+    for _ in 0..NUM_TRACKS {
+        for _ in 0..NUM_SECTORS_PER_TRACK {
+            out.write(&buf)?;
+        }
+    }
+
+    Ok(())
+}
+
+pub fn list_directory(image_path: &str) -> Result<()> {
     let mut disk = File::open(image_path)?;
     let catalog = read_catalog(&mut disk)?;
     let files: Vec<FileEntry> = merge_extents(catalog);
@@ -228,7 +248,7 @@ pub fn list_directory(image_path: &String) -> Result<()> {
     Ok(())
 }
 
-pub fn copy_file_out(image_path: &String, cpm_file_name: &String, output_path: &String) -> Result<()> {
+pub fn copy_file_out(image_path: &str, cpm_file_name: &str, output_path: &str) -> Result<()> {
     let mut disk = File::open(image_path)?;
     let catalog = read_catalog(&mut disk)?;
     let files: Vec<FileEntry> = merge_extents(catalog);

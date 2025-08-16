@@ -71,14 +71,13 @@ fn main() -> Result<()> {
 
     match &cli.command {
         Commands::Create { image_path } => {
-            println!("TODO: Create new image '{}'.", image_path);
+            cpmimg::create_image(image_path)?;
         }
         Commands::Copyin { image_path, source_path, cpm_file_name } => {
             println!("TODO: Copy '{}' to '{}' image '{}'.", source_path, cpm_file_name, image_path);
         }
         Commands::Copyout { image_path, cpm_file_name, output_path } => {
-            println!("TODO: Copy '{}' from image '{}' to '{}'.", cpm_file_name, image_path, output_path);
-            cpmimg::copy_file_out(image_path, cpm_file_name, output_path);
+            cpmimg::copy_file_out(image_path, cpm_file_name, output_path)?;
         }
         Commands::Delete { image_path, cpm_file_name } => {
             println!("TODO: Delete '{}' from image '{}'.", cpm_file_name, image_path);
