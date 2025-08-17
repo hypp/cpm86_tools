@@ -16,7 +16,7 @@ const CATALOG_OFFSET: u64 = 0x2000; // directory entries start at $2000
 const DATA_OFFSET: u64 = CATALOG_OFFSET+MAXDIR as u64*32;
 
 #[derive(Debug)]
-pub struct DirEntry {
+struct DirEntry {
     directory_entry_idx: usize, // Index/Row in directory
     user_number: u8,       // UU
     filename: String,       // F1..F8
@@ -47,7 +47,7 @@ impl DirEntry {
 
 
 #[derive(Debug)]
-pub struct FileEntry {
+struct FileEntry {
     first_directory_entry_idx: usize,
     user_number: u8,
     filename: String,
@@ -63,7 +63,7 @@ impl FileEntry {
     }
 }
 
-pub fn read_catalog(disk: &mut File) -> Result<Vec<DirEntry>> {
+fn read_catalog(disk: &mut File) -> Result<Vec<DirEntry>> {
     let mut catalog = Vec::new();
 
     disk.seek(SeekFrom::Start(CATALOG_OFFSET))?;
@@ -130,7 +130,7 @@ pub fn read_catalog(disk: &mut File) -> Result<Vec<DirEntry>> {
     Ok(catalog)
 }
 
-pub fn merge_extents(entries: Vec<DirEntry>) -> Vec<FileEntry> {
+fn merge_extents(entries: Vec<DirEntry>) -> Vec<FileEntry> {
     let mut files: HashMap<(u8, String, String), FileEntry> = HashMap::new();
 
     for entry in entries {
