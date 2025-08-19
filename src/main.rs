@@ -74,7 +74,7 @@ fn main() -> Result<()> {
             cpmimg::create_image(image_path)?;
         }
         Commands::Copyin { image_path, source_path, cpm_file_name } => {
-            println!("TODO: Copy '{}' to '{}' image '{}'.", source_path, cpm_file_name, image_path);
+            cpmimg::copy_file_in(image_path, source_path, cpm_file_name)?;
         }
         Commands::Copyout { image_path, cpm_file_name, output_path } => {
             cpmimg::copy_file_out(image_path, cpm_file_name, output_path)?;

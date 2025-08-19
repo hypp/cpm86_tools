@@ -1,19 +1,29 @@
 
 use std::cmp::min;
 use std::collections::HashMap;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Write, Seek, SeekFrom};
 use anyhow::Result;
 
-const NUM_TRACKS: usize = 84;
+const NUM_SIDES: usize = 2;
+const NUM_TRACKS: usize = 80;
 const NUM_SECTORS_PER_TRACK: usize = 8;
 const NUM_BYTES_PER_SECTOR: usize = 512;
 
 const BLOCKSIZE: usize = 2048; // $800 bytes
 const DIRBLOCKS: usize = 2;
-const MAXDIR: usize = 128;
+const DIRENTRY_SIZE: usize = 32;
+// TODO Is 128 supported? It fits on disk
+const MAXDIR_ENTRIES: usize = 128;
 const CATALOG_OFFSET: u64 = 0x2000; // directory entries start at $2000
-const DATA_OFFSET: u64 = CATALOG_OFFSET+MAXDIR as u64*32;
+// TODO DATA_OFFSET is diffent on different images
+// +0x1000 om my images named 02* 03*
+// Also layout is different on some disks every other $1000 is empty??
+// i.e $4000-$5000 is used, $5000-$6000 is unused and so on
+const DATA_OFFSET: u64 = CATALOG_OFFSET+MAXDIR_ENTRIES as u64*DIRENTRY_SIZE as u64;
+
+// TODO is this caclulation correct?
+const MAX_NUM_BLOCKS: usize = (NUM_SIDES*NUM_TRACKS*NUM_SECTORS_PER_TRACK*NUM_BYTES_PER_SECTOR-DATA_OFFSET as usize)/BLOCKSIZE;
 
 #[derive(Debug)]
 struct DirEntry {
@@ -43,6 +53,46 @@ impl DirEntry {
     pub fn is_full_extent(&self) -> bool {
         self.record_count >= 0x80
     }
+
+    pub fn write_to_file(&self, file: &mut File) -> Result<()> {
+        let mut buf: Vec<u8> = Vec::new();
+
+        buf.push(self.user_number);
+
+        for c in self.filename.chars() {
+            buf.push((c as u8) & 0x7F);
+        }
+
+        for c in self.filetype.chars() {
+            buf.push((c as u8) & 0x7F);
+        }
+
+        // Extent
+        buf.push(self.extent);
+        buf.push(self.s1);
+        buf.push(self.s2);
+        buf.push(self.record_count);
+        
+        for al in self.allocation.iter() {
+            let bytes = al.to_le_bytes();
+            buf.push(bytes[0]);
+            buf.push(bytes[1]);
+        }
+
+        if buf.len() > DIRENTRY_SIZE {
+            anyhow::bail!("Directroy entry is to large for {}:{}.{} at {}",self.user_number, self.filename, self.filetype, self.directory_entry_idx);
+        }
+
+        while buf.len() < DIRENTRY_SIZE {
+            buf.push(0);
+        }
+
+        let offset = CATALOG_OFFSET + self.directory_entry_idx as u64 * DIRENTRY_SIZE as u64;
+        file.seek(SeekFrom::Start(offset))?;
+        file.write_all(&buf)?;
+
+        Ok(())
+    }
 }
 
 
@@ -61,6 +111,13 @@ impl FileEntry {
     pub fn file_size(&self) -> usize {
         self.extents.iter().map(|e| e.extent_size()).sum()
     }
+
+    pub fn write_to_file(&self, file: &mut File) -> Result<()> {
+        for entry in self.extents.iter() {
+            entry.write_to_file(file)?;
+        }
+        Ok(())
+    }    
 }
 
 fn read_catalog(disk: &mut File) -> Result<Vec<DirEntry>> {
@@ -70,7 +127,7 @@ fn read_catalog(disk: &mut File) -> Result<Vec<DirEntry>> {
     let mut buffer = vec![0u8; BLOCKSIZE * DIRBLOCKS];
     disk.read_exact(&mut buffer)?;
 
-    for idx in 0..MAXDIR {
+    for idx in 0..MAXDIR_ENTRIES {
         let offset = idx * 32; // directory entry = 32 byte
         let entry = &buffer[offset..offset + 32];
 
@@ -89,7 +146,7 @@ fn read_catalog(disk: &mut File) -> Result<Vec<DirEntry>> {
 
         let extent = entry[12]; // EX
         let s1 = entry[13];
-        let s2 = entry[14];     // S2
+        let s2: u8 = entry[14];     // S2
         let record_count = entry[15];
 
         let entry_number = (32 * s2 as u16) + extent as u16;
@@ -168,21 +225,39 @@ fn merge_extents(entries: Vec<DirEntry>) -> Vec<FileEntry> {
     file_list
 }
 
-pub fn copy_out(files: Vec<FileEntry>, source_file: &str, disk: &mut File, out: &mut File) -> Result<()> {
-    let parts: Vec<&str> = source_file.split(|c| c == ':' || c == '.').collect();
+fn split_cpm_file_name(cpm_file_name: &str) -> Result<(u8, String, String)> {
+    let parts: Vec<&str> = cpm_file_name.split(|c| c == ':' || c == '.').collect();
     if parts.len() != 3 {
-        anyhow::bail!("Invalid format, expected user:filename.filetype");
+        anyhow::bail!("Invalid format, expected user:filename.filetype {}", cpm_file_name);
     }
 
     let user: u8 = parts[0].parse().unwrap_or(0);
-    let filename = parts[1].to_lowercase();
-    let filetype = parts[2].to_lowercase();
+    let filename = parts[1].to_uppercase();
+    let filetype = parts[2].to_uppercase();
 
-    if let Some(file_entry) = files.iter().find(|f| {
+    if filename.len() > 8 || filetype.len() > 3 {
+        anyhow::bail!("Filename too long {}", cpm_file_name);
+    }
+
+    Ok((user,filename,filetype))
+}
+
+fn get_file_entry<'a>(files: &'a Vec<FileEntry>, cpm_file_name: &str) -> Result<Option<&'a FileEntry>> {
+
+    let (user,filename, filetype) = split_cpm_file_name(cpm_file_name)?;
+
+    let file_entry = files.iter().find(|f| {
         f.user_number == user &&
-        f.filename.to_lowercase() == filename &&
-        f.filetype.to_lowercase() == filetype
-    }) {
+        f.filename.to_uppercase() == filename &&
+        f.filetype.to_uppercase() == filetype
+    });
+
+    Ok(file_entry)
+}
+
+fn copy_out(files: Vec<FileEntry>, cpm_file_name: &str, disk: &mut File, out: &mut File) -> Result<()> {
+
+    if let Some(file_entry) = get_file_entry(&files, cpm_file_name)? {
         let total_size = file_entry.file_size();
         let mut written: usize = 0;
 
@@ -210,11 +285,145 @@ pub fn copy_out(files: Vec<FileEntry>, source_file: &str, disk: &mut File, out: 
         }
 
     } else {
-        anyhow::bail!("File {} not found in image", source_file);
+        anyhow::bail!("File {} not found in image", cpm_file_name);
     }
 
     Ok(())
 }
+
+fn copy_in(files: Vec<FileEntry>, cpm_file_name: &str, disk: &mut File, input: &mut File) -> Result<()> {
+
+    if let Some(_file_entry) = get_file_entry(&files, cpm_file_name)? {
+        anyhow::bail!("File {} already exists in image", cpm_file_name);
+    }
+
+    let (user,filename, filetype) = split_cpm_file_name(cpm_file_name)?;
+
+    // split the file in blocks
+    let mut file_data = Vec::new();
+    input.read_to_end(&mut file_data)?;
+    // round up file length nearest 128
+    let file_len = ((file_data.len() + 127) / 128) * 128;
+    let mut blocks: Vec<Vec<u8>> = Vec::new();
+    while !file_data.is_empty() {
+        let chunk_size = std::cmp::min(BLOCKSIZE, file_data.len());
+        blocks.push(file_data.drain(..chunk_size).collect());
+    }
+    let blocks_needed = blocks.len();
+    let entries_needed = (blocks_needed + 7) / 8; // 8 block per DirEntry
+
+    // Make sure we have enough free entries
+    let mut used_entries = vec![false; MAXDIR_ENTRIES];
+    for f in &files {
+        for e in &f.extents {
+            used_entries[e.directory_entry_idx] = true;
+        }
+    }
+
+    let mut free_entries = Vec::new();
+    for (idx, used) in used_entries.iter().enumerate() {
+        if !used {
+            free_entries.push(idx);
+        }
+    }    
+
+    if free_entries.len() < entries_needed {
+        anyhow::bail!("Not enough free entries in directory. Free: {} Needed: {}", free_entries.len(), entries_needed);
+    }
+
+    // Make sure we have enough free blocks
+    // TODO calculate correct MAX_NUM_BLOCKS
+    // 2048*320 = 655360
+    let mut used_blocks = vec![false; 320];
+    // block 0 and 1 are reserved
+    used_blocks[0] = true;
+    used_blocks[1] = true;
+    for f in &files {
+        for e in &f.extents {
+            for al in &e.allocation {
+                let tmp = *al as usize;
+                if tmp >= used_blocks.len() {
+                    println!("Invalid block number {} for file {}", al, f.filename);
+                    continue;
+                } 
+                used_blocks[tmp as usize] = true;
+            }
+        }
+    }
+
+    let mut free_blocks = Vec::new();
+    for (idx, used) in used_blocks.iter().enumerate() {
+        if !used {
+            free_blocks.push(idx as u16);
+        }
+    }    
+
+    // Now create DirEntry and all FileEntry:s
+    let mut file_entries: Vec<DirEntry> = Vec::new();
+    let mut free_block_iter = free_blocks.into_iter();
+    let mut blocks_left = blocks_needed;
+    let mut file_len_left = file_len;
+    for i in 0..entries_needed {
+        let directory_entry_idx = free_entries[i];
+        let mut al_list: Vec<u16> = Vec::new();
+        for _ in 0..min(8, blocks_left) {
+            if let Some(block) = free_block_iter.next() {
+                al_list.push(block);
+                blocks_left -= 1;
+            }
+        }
+
+        let mut record_count: u8 = 0x80;
+        if al_list.len() < 8 {
+            // only happens on last iteration
+            record_count = (file_len_left / 128) as u8;
+        } else {
+            file_len_left -= 8*BLOCKSIZE
+        }
+
+        let entry = DirEntry {
+            directory_entry_idx,
+            user_number: user,
+            filename: filename.clone(),
+            filetype: filetype.clone(),
+            extent: (i & 0x1f) as u8,
+            s2: ((i >> 5) & 0xff) as u8,
+            s1: 0,
+            record_count,
+            allocation: al_list,
+            readonly: false,
+            system: false,
+            entry_number: i as u16,
+        };
+
+        file_entries.push(entry);
+    }
+
+    let entry = FileEntry {
+        first_directory_entry_idx: file_entries[0].directory_entry_idx,
+        user_number: file_entries[0].user_number,
+        filename,
+        filetype,
+        readonly: false,
+        system: false,
+        extents: file_entries
+    };
+
+    entry.write_to_file(disk)?;
+
+    let mut iter = blocks.into_iter(); 
+    for e in &entry.extents {
+        for al in &e.allocation {
+            let offset = DATA_OFFSET + *al as u64*BLOCKSIZE as u64;
+            let block = iter.next().unwrap();
+            disk.seek(SeekFrom::Start(offset))?;
+            disk.write_all(&block)?;
+        }
+    }    
+
+    Ok(())
+}
+
 
 pub fn create_image(image_path: &str) -> Result<()> {
     let mut out = File::create(image_path)?;
@@ -245,6 +454,20 @@ pub fn list_directory(image_path: &str) -> Result<()> {
         println!("{:>3} {:>8} {:>3} {:>8} {:>8} {:>6}", entry.user_number, entry.filename, entry.filetype, entry.file_size(), entry.readonly, entry.system);
     }
 
+    Ok(())
+}
+
+pub fn copy_file_in(image_path: &str, source_path: &str, cpm_file_name: &str) -> Result<()> {
+    let mut disk = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(image_path)?;
+    let catalog = read_catalog(&mut disk)?;
+    let files: Vec<FileEntry> = merge_extents(catalog);
+
+    let mut input = File::open(source_path)?;
+    copy_in(files, cpm_file_name, &mut disk, &mut input)?;
+    
     Ok(())
 }
 
