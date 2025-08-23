@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write, Seek, SeekFrom};
 use anyhow::Result;
+use clap::{ValueEnum};
 
 const NUM_SIDES: usize = 2;
 const NUM_TRACKS: usize = 80;
@@ -20,10 +21,100 @@ const CATALOG_OFFSET: u64 = 0x2000; // directory entries start at $2000
 // +0x1000 om my images named 02* 03*
 // Also layout is different on some disks every other $1000 is empty??
 // i.e $4000-$5000 is used, $5000-$6000 is unused and so on
-const DATA_OFFSET: u64 = CATALOG_OFFSET+MAXDIR_ENTRIES as u64*DIRENTRY_SIZE as u64;
+const DATA_OFFSET: u64 = CATALOG_OFFSET;
+//const DATA_OFFSET: u64 = CATALOG_OFFSET+MAXDIR_ENTRIES as u64*DIRENTRY_SIZE as u64;
 
 // TODO is this caclulation correct?
 const MAX_NUM_BLOCKS: usize = (NUM_SIDES*NUM_TRACKS*NUM_SECTORS_PER_TRACK*NUM_BYTES_PER_SECTOR-DATA_OFFSET as usize)/BLOCKSIZE;
+
+// If I run => stat dsk:
+// 5,088: 128 Byte Record Capacity
+//   636: Kilobyte Drive Capacity
+//   128: 32 Byte  Directory Entries
+//   128: Checked  Directory Entries
+//   128: 128 Byte Records / Directory Entry
+//    16: 128 Byte Records / Block
+//    32: 128 Byte Records / Track
+//     1: Reserved  Tracks
+//
+
+
+// https://forum.vcfed.org/index.php?threads/more-on-exidy-sorcerer-disk-images.68900/
+
+// John Elliott
+// 30 mars 2022 20:24:47
+// till
+// mkfs.cpm is likely not populating the boot sector. 
+//If you examine it in a hex editor, the last byte (offset 01FFh) 
+// is used by CP/M-86 to determine the capacity. This should be one of:
+// 00h: 160k
+// 01h: 320k
+// 0Ch: 1200k (144FEAT)
+// 10h: 360k (PCP/M-86)
+// 11h: 720k (PCP/M-86)
+// 40h: 360k (PCP/M-86)
+// 48h: 720k (144FEAT)
+// 90h: 1440k (144FEAT)
+
+// 00h: 160k
+// 01h: 320k
+// 0Ch: 1200k (144FEAT)
+// 10h: 360k (PCP/M-86)
+// 11h: 720k (PCP/M-86)
+// 40h: 360k (PCP/M-86)
+// 48h: 720k (144FEAT)
+// 90h: 1440k (144FEAT)
+
+const DISKSIZE_OFFSET: usize = 0x1ff;
+
+#[derive(Debug, Clone, ValueEnum)]
+pub enum DiskSize {
+    #[clap(name = "160K")]
+    K160,
+    #[clap(name = "320K")]
+    K320,
+    #[clap(name = "1200K")]
+    K1200,
+    #[clap(name = "360K")]
+    K360,
+    #[clap(name = "720K")]
+    K720,
+    #[clap(name = "360K2")]
+    K360_2,
+    #[clap(name = "720K2")]
+    K720_2,
+    #[clap(name = "1440K")]
+    K1440,
+}
+
+impl DiskSize {
+    /// Returnerar ett hexvärde (kan vara typiskt för DPB, media descriptor byte etc.)
+    fn hex_value(&self) -> u8 {
+        match self {
+            DiskSize::K160  => 0x00,
+            DiskSize::K320  => 0x01,
+            DiskSize::K1200  => 0x0c,
+            DiskSize::K360  => 0x10,
+            DiskSize::K720  => 0x11,
+            DiskSize::K360_2  => 0x40,
+            DiskSize::K720_2  => 0x48,
+            DiskSize::K1440  => 0x90,
+        }
+    }
+
+    fn num_bytes(&self) -> usize {
+        match self {
+            DiskSize::K160  => 160*1024,
+            DiskSize::K320  => 320*1024,
+            DiskSize::K1200  => 1200*1024,
+            DiskSize::K360  => 360*1024,
+            DiskSize::K720  => 720*1024,
+            DiskSize::K360_2  => 360*1024,
+            DiskSize::K720_2  => 720*1024,
+            DiskSize::K1440  => 1440*1024,
+        }
+    }
+}
 
 #[derive(Debug)]
 struct DirEntry {
@@ -425,19 +516,26 @@ fn copy_in(files: Vec<FileEntry>, cpm_file_name: &str, disk: &mut File, input: &
 }
 
 
-pub fn create_image(image_path: &str) -> Result<()> {
+pub fn create_image(image_path: &str, size: &DiskSize) -> Result<()> {
     let mut out = File::create(image_path)?;
     let mut buf = [0u8; NUM_BYTES_PER_SECTOR];
+
+    let num_tracks = size.num_bytes() / NUM_BYTES_PER_SECTOR / NUM_SECTORS_PER_TRACK;        
+
     for i in 0..buf.len() {
         // e5 is used as empty directory entry
         buf[i] = 0xe5;
     }
 
-    for _ in 0..NUM_TRACKS {
+    for _ in 0..num_tracks {
         for _ in 0..NUM_SECTORS_PER_TRACK {
             out.write(&buf)?;
         }
     }
+
+    // Write the magic byte to the disk type offset
+    out.seek(SeekFrom::Start(DISKSIZE_OFFSET as u64))?;
+    out.write(&[size.hex_value()])?;
 
     Ok(())
 }

@@ -1,7 +1,11 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use anyhow::Result;
 
 use cpm86_tools::cpmimg;
+
+
+
+
 
 #[derive(Parser)]
 #[clap(version, about = "A tool for COMPIS CP/M 86 raw floppy images.")]
@@ -18,6 +22,8 @@ enum Commands {
         /// Path to the new floppy image.
         #[clap(name = "IMAGE_FILE")]
         image_path: String,
+        #[clap(name = "SIZE")]
+        size: cpmimg::DiskSize,
     },
     /// Copy a file from local filesystem to the floppy image.
     /// Ex: cpmtool copyin mycompis.img myprog.bin 0:myprog.cmd
@@ -70,8 +76,8 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Create { image_path } => {
-            cpmimg::create_image(image_path)?;
+        Commands::Create { image_path, size } => {
+            cpmimg::create_image(image_path, size)?;
         }
         Commands::Copyin { image_path, source_path, cpm_file_name } => {
             cpmimg::copy_file_in(image_path, source_path, cpm_file_name)?;
