@@ -346,6 +346,14 @@ fn get_file_entry<'a>(files: &'a Vec<FileEntry>, cpm_file_name: &str) -> Result<
     Ok(file_entry)
 }
 
+// TODO wrap around to reach side 2 of the disk
+fn allocation_to_offset(al: u16) -> usize {
+    let even = (al & 0xfffe) as usize;
+    let odd = (al & 1) as usize;
+    let offset = even*BLOCKSIZE*NUM_SIDES+odd*BLOCKSIZE;
+    offset
+}
+
 fn copy_out(files: Vec<FileEntry>, cpm_file_name: &str, disk: &mut File, out: &mut File) -> Result<()> {
 
     if let Some(file_entry) = get_file_entry(&files, cpm_file_name)? {
@@ -355,7 +363,7 @@ fn copy_out(files: Vec<FileEntry>, cpm_file_name: &str, disk: &mut File, out: &m
         for extent in &file_entry.extents {
             for &block in &extent.allocation {
                 if block == 0 { continue; }
-                let offset = DATA_OFFSET + block as u64 * BLOCKSIZE as u64;
+                let offset = DATA_OFFSET + allocation_to_offset(block) as u64;
                 disk.seek(SeekFrom::Start(offset))?;
 
                 let remaining = total_size - written;
@@ -505,7 +513,7 @@ fn copy_in(files: Vec<FileEntry>, cpm_file_name: &str, disk: &mut File, input: &
     let mut iter = blocks.into_iter(); 
     for e in &entry.extents {
         for al in &e.allocation {
-            let offset = DATA_OFFSET + *al as u64*BLOCKSIZE as u64;
+            let offset = DATA_OFFSET + allocation_to_offset(*al) as u64;
             let block = iter.next().unwrap();
             disk.seek(SeekFrom::Start(offset))?;
             disk.write_all(&block)?;
