@@ -1,7 +1,8 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use anyhow::Result;
 
-use cpm86_tools::cpmimg;
+mod lib;
+use crate::lib::cpmimg;
 
 
 

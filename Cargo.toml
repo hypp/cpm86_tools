@@ -7,3 +7,11 @@ authors = ["Mathias Olsson"]
 [dependencies]
 anyhow = "1.0.99"
 clap = {version = "4.5.45", features = ["derive","cargo"]} 
+
+[[bin]]
+name = "cpm86_tools"
+path = "src/tools/main.rs"
+
+[[bin]]
+name = "bin2cmd"
+path = "src/bin2cmd/main.rs"
