@@ -7,25 +7,34 @@ use anyhow::Result;
 use clap::{ValueEnum};
 
 const NUM_SIDES: usize = 2;
+// empirically tested with copydisk, and repeated usage of pip to fill a large disk image
+// data equal to or above 0xa0000 is never touched
 const NUM_TRACKS: usize = 80;
 const NUM_SECTORS_PER_TRACK: usize = 8;
 const NUM_BYTES_PER_SECTOR: usize = 512;
+const TOTAL_DISKSIZE: usize = NUM_TRACKS*NUM_SECTORS_PER_TRACK*NUM_BYTES_PER_SECTOR*NUM_SIDES;
 
-const BLOCKSIZE: usize = 2048; // $800 bytes
+const BLOCKSIZE: usize = 16*128; // 16: 128 Byte Records / Block $800 bytes
 const DIRBLOCKS: usize = 2;
-const DIRENTRY_SIZE: usize = 32;
-// TODO Is 128 supported? It fits on disk
-const MAXDIR_ENTRIES: usize = 128;
+const DIRENTRY_SIZE: usize = 32; // 128: 32 Byte  Directory Entries
+const MAXDIR_ENTRIES: usize = 128; // 128: 32 Byte  Directory Entries
 const CATALOG_OFFSET: u64 = 0x2000; // directory entries start at $2000
-// TODO DATA_OFFSET is diffent on different images
-// +0x1000 om my images named 02* 03*
-// Also layout is different on some disks every other $1000 is empty??
-// i.e $4000-$5000 is used, $5000-$6000 is unused and so on
 const DATA_OFFSET: u64 = CATALOG_OFFSET;
-//const DATA_OFFSET: u64 = CATALOG_OFFSET+MAXDIR_ENTRIES as u64*DIRENTRY_SIZE as u64;
 
 // TODO is this caclulation correct?
-const MAX_NUM_BLOCKS: usize = (NUM_SIDES*NUM_TRACKS*NUM_SECTORS_PER_TRACK*NUM_BYTES_PER_SECTOR-DATA_OFFSET as usize)/BLOCKSIZE;
+const MAX_NUM_BLOCKS: usize = (TOTAL_DISKSIZE-DATA_OFFSET as usize)/BLOCKSIZE;
+
+// Data in the image is stored like this:
+// $0000-$1000 side 0
+// $1000-$2000 side 1
+// $2000-$3000 side 0
+// $3000-$4000 side 1
+// ... and so on
+// When copying to disk with pip
+// side 0 is used first, increasing track number until track 80 is reached
+// then side 1 is used, BUT backwards, decreasing track number
+// The bios (or drive) hides this from CP/M-86 and it is not
+// reflected in the directory structure, AL (allocations) keep increasing 
 
 // If I run => stat dsk:
 // 5,088: 128 Byte Record Capacity
@@ -346,12 +355,20 @@ fn get_file_entry<'a>(files: &'a Vec<FileEntry>, cpm_file_name: &str) -> Result<
     Ok(file_entry)
 }
 
-// TODO wrap around to reach side 2 of the disk
 fn allocation_to_offset(al: u16) -> usize {
     let even = (al & 0xfffe) as usize;
     let odd = (al & 1) as usize;
-    let offset = even*BLOCKSIZE*NUM_SIDES+odd*BLOCKSIZE;
-    offset
+    if al < 0x9e {
+        // allocations below 0x9e are on side 0
+        // counting UP
+        let offset = DATA_OFFSET as usize + even*BLOCKSIZE*NUM_SIDES+odd*BLOCKSIZE;
+        offset
+    } else {
+        // allocations above 0x9d are on side 1
+        // counting DOWN
+        let offset = TOTAL_DISKSIZE - (even - 0x9d) * BLOCKSIZE*NUM_SIDES +odd*BLOCKSIZE;
+        offset
+    }
 }
 
 fn copy_out(files: Vec<FileEntry>, cpm_file_name: &str, disk: &mut File, out: &mut File) -> Result<()> {
@@ -363,7 +380,7 @@ fn copy_out(files: Vec<FileEntry>, cpm_file_name: &str, disk: &mut File, out: &m
         for extent in &file_entry.extents {
             for &block in &extent.allocation {
                 if block == 0 { continue; }
-                let offset = DATA_OFFSET + allocation_to_offset(block) as u64;
+                let offset =  allocation_to_offset(block) as u64;
                 disk.seek(SeekFrom::Start(offset))?;
 
                 let remaining = total_size - written;
@@ -431,9 +448,7 @@ fn copy_in(files: Vec<FileEntry>, cpm_file_name: &str, disk: &mut File, input: &
     }
 
     // Make sure we have enough free blocks
-    // TODO calculate correct MAX_NUM_BLOCKS
-    // 2048*320 = 655360
-    let mut used_blocks = vec![false; 320];
+    let mut used_blocks = vec![false; MAX_NUM_BLOCKS];
     // block 0 and 1 are reserved
     used_blocks[0] = true;
     used_blocks[1] = true;
@@ -513,7 +528,7 @@ fn copy_in(files: Vec<FileEntry>, cpm_file_name: &str, disk: &mut File, input: &
     let mut iter = blocks.into_iter(); 
     for e in &entry.extents {
         for al in &e.allocation {
-            let offset = DATA_OFFSET + allocation_to_offset(*al) as u64;
+            let offset = allocation_to_offset(*al) as u64;
             let block = iter.next().unwrap();
             disk.seek(SeekFrom::Start(offset))?;
             disk.write_all(&block)?;
