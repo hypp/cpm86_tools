@@ -1,12 +1,8 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use anyhow::Result;
 
 mod lib;
 use crate::lib::cpmimg;
-
-
-
-
 
 #[derive(Parser)]
 #[clap(version, about = "A tool for COMPIS CP/M 86 raw floppy images.")]
@@ -23,7 +19,7 @@ enum Commands {
         /// Path to the new floppy image.
         #[clap(name = "IMAGE_FILE")]
         image_path: String,
-        #[clap(name = "SIZE")]
+        #[clap(name = "SIZE", value_enum, default_value_t = cpmimg::DiskSize::K640)]
         size: cpmimg::DiskSize,
     },
     /// Copy a file from local filesystem to the floppy image.
