@@ -94,6 +94,8 @@ pub enum DiskSize {
     K720_2,
     #[clap(name = "1440K")]
     K1440,
+    #[clap(name = "640K")]
+    K640,
 }
 
 impl DiskSize {
@@ -108,6 +110,7 @@ impl DiskSize {
             DiskSize::K360_2  => 0x40,
             DiskSize::K720_2  => 0x48,
             DiskSize::K1440  => 0x90,
+            DiskSize::K640 => 0xe5, // Don't know what to write here, 
         }
     }
 
@@ -121,6 +124,7 @@ impl DiskSize {
             DiskSize::K360_2  => 360*1024,
             DiskSize::K720_2  => 720*1024,
             DiskSize::K1440  => 1440*1024,
+            DiskSize::K640 => 636*1024,
         }
     }
 }
