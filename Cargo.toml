@@ -6,7 +6,9 @@ authors = ["Mathias Olsson"]
 
 [dependencies]
 anyhow = "1.0.99"
+binrw = "0.15.0"
 clap = {version = "4.5.45", features = ["derive","cargo"]} 
+num_enum = "0.7.4"
 
 [[bin]]
 name = "cpm86_tools"
