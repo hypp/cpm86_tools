@@ -161,7 +161,7 @@ fn create_image(cmd_path: &str, code_path: &str, load_address: &Option<u32>, dat
         while data_data.len() < data_paragraphs as usize*16 {
             data_data.push(0);
         }
-        let data_a_base = (load_address.unwrap_or(0) / 16) as u16;
+        let data_a_base = (data_load_address.unwrap_or(0) / 16) as u16;
 
         header.groups[1] = GroupDescriptor {
             g_form: GForm(GType::Data as u8),
@@ -172,9 +172,9 @@ fn create_image(cmd_path: &str, code_path: &str, load_address: &Option<u32>, dat
         };
     }
 
-    header.write(&mut out);
-    out.write(&code_data);
-    out.write(&data_data);
+    header.write(&mut out)?;
+    out.write(&code_data)?;
+    out.write(&data_data)?;
 
     Ok(())
 }
