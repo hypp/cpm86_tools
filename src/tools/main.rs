@@ -83,7 +83,7 @@ fn main() -> Result<()> {
             cpmimg::copy_file_out(image_path, cpm_file_name, output_path)?;
         }
         Commands::Delete { image_path, cpm_file_name } => {
-            println!("TODO: Delete '{}' from image '{}'.", cpm_file_name, image_path);
+            cpmimg::delete_file(image_path, cpm_file_name)?;
         }
         Commands::List { image_path } => {
             cpmimg::list_directory(image_path)?;

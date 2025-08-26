@@ -129,7 +129,7 @@ impl DiskSize {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct DirEntry {
     directory_entry_idx: usize, // Index/Row in directory
     user_number: u8,       // UU
@@ -197,10 +197,14 @@ impl DirEntry {
 
         Ok(())
     }
+
+    pub fn delete(&mut self) {
+        self.user_number = 0xe5;
+    }
+
 }
 
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct FileEntry {
     first_directory_entry_idx: usize,
     user_number: u8,
@@ -221,7 +225,14 @@ impl FileEntry {
             entry.write_to_file(file)?;
         }
         Ok(())
-    }    
+    }
+
+    pub fn delete(&mut self) {
+        self.user_number = 0xe5;
+        for extent in &mut self.extents {
+            extent.delete();
+        }
+    }
 }
 
 fn read_catalog(disk: &mut File) -> Result<Vec<DirEntry>> {
@@ -417,7 +428,10 @@ fn copy_in(files: Vec<FileEntry>, cpm_file_name: &str, disk: &mut File, input: &
         anyhow::bail!("File {} already exists in image", cpm_file_name);
     }
 
-    let (user,filename, filetype) = split_cpm_file_name(cpm_file_name)?;
+    let (user,mut filename, filetype) = split_cpm_file_name(cpm_file_name)?;
+    while filename.len() < 8 {
+        filename.push(' ');
+    }
 
     // split the file in blocks
     let mut file_data = Vec::new();
@@ -542,6 +556,20 @@ fn copy_in(files: Vec<FileEntry>, cpm_file_name: &str, disk: &mut File, input: &
     Ok(())
 }
 
+fn delete(files: Vec<FileEntry>, cpm_file_name: &str, disk: &mut File) -> Result<()> {
+
+    if let Some(file_entry) = get_file_entry(&files, cpm_file_name)? {
+        let mut fe = file_entry.clone();
+        fe.delete();
+        fe.write_to_file(disk)?;
+
+    } else {
+        anyhow::bail!("File {} not found in image", cpm_file_name);
+    }
+
+    Ok(())
+}
+
 
 pub fn create_image(image_path: &str, size: &DiskSize) -> Result<()> {
     let mut out = File::create(image_path)?;
@@ -607,4 +635,15 @@ pub fn copy_file_out(image_path: &str, cpm_file_name: &str, output_path: &str) -
     Ok(())
 }
 
+pub fn delete_file(image_path: &str, cpm_file_name: &str) -> Result<()> {
+    let mut disk = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(image_path)?;
+    let catalog = read_catalog(&mut disk)?;
+    let files: Vec<FileEntry> = merge_extents(catalog);
 
+    delete(files, cpm_file_name,&mut disk)?;
+
+    Ok(())
+}
