@@ -168,6 +168,14 @@ fn create_image(cmd_path: &str, code_path: &str, load_address: &Option<u32>, dat
 
     let mut code_file= File::open(code_path)?;
     let mut code_data = Vec::new();
+
+    if data_path.is_none() {
+        // prepend 0x100 empty bytes
+        while code_data.len() != 0x100 {
+            code_data.push(0);
+        }
+    }
+
     code_file.read_to_end(&mut code_data)?;
 
     let code_len = code_data.len();
@@ -182,7 +190,7 @@ fn create_image(cmd_path: &str, code_path: &str, load_address: &Option<u32>, dat
         g_length: code_paragraphs,
         a_base: code_a_base,
         g_min: code_paragraphs,
-        g_max: code_paragraphs,
+        g_max: 0,
     };
 
     let mut data_data = Vec::new();
@@ -202,7 +210,7 @@ fn create_image(cmd_path: &str, code_path: &str, load_address: &Option<u32>, dat
             g_length: data_paragraphs,
             a_base: data_a_base,
             g_min: data_paragraphs,
-            g_max: data_paragraphs,
+            g_max: 0,
         };
     }
 
@@ -222,8 +230,7 @@ fn main() -> Result<()> {
         Commands::MemoryModel8080 { cmd_path, code_path , load_address} => {
             println!("MemoryModel8080 {} {} {}",cmd_path,code_path,load_address.unwrap_or(0));
             println!("Note: code must start at org $100");
-            println!("TODO: Not implemented");
-//            create_image(cmd_path, code_path, load_address, data_path, data_load_address)?;
+            create_image(cmd_path, code_path, load_address, &None, &None)?;
         },
         Commands::MemoryModelSmall { cmd_path, code_path , load_address, data_path, data_load_address} => {
             println!("MemoryModelSmall {} {} {} {} {}",cmd_path,code_path,load_address.unwrap_or(0),data_path,data_load_address.unwrap_or(0));
