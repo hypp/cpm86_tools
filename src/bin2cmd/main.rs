@@ -15,8 +15,9 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Create a new .CMD-file
-    /// Ex: bin2cmd create myprog.cmd myprog.bin 
-    Create {
+    /// Ex: bin2cmd memory-model-8080 myprog.cmd myprog.bin 
+    #[clap(name="memory-model-8080")]
+    MemoryModel8080 {
         /// Path to the new .CMD-file.
         #[clap(name = "OUTPUT_FILE")]
         cmd_path: String,
@@ -24,17 +25,50 @@ enum Commands {
         #[clap(name = "CODE_FILE")]
         code_path: String,
         // Optional load address
-        #[clap(name = "LOAD_ADDRESS")]
+        #[clap(long)]
+        load_address: Option<u32>,
+    },
+    /// Create a new .CMD-file
+    /// Ex: bin2cmd memory-model-small myprog.cmd myprog.bin mydata.bin
+    MemoryModelSmall {
+        /// Path to the new .CMD-file.
+        #[clap(name = "OUTPUT_FILE")]
+        cmd_path: String,
+        /// Path to the code file
+        #[clap(name = "CODE_FILE")]
+        code_path: String,
+        // Optional load address
+        #[clap(long)]
         load_address: Option<u32>,
         // Path to optional data file
         #[clap(name = "DATA_FILE")]
-        data_path: Option<String>,
+        data_path: String,
         // Optional data load address
-        #[clap(name = "DATA_LOAD_ADDRESS")]
+        #[clap(long)]
         data_load_address: Option<u32>,
     },
-}
+    /// Create a new .CMD-file
+    /// Ex: bin2cmd memory-model-compact myprog.cmd myprog.bin mydata.bin
+    MemoryModelCompact {
+        /// Path to the new .CMD-file.
+        #[clap(name = "OUTPUT_FILE")]
+        cmd_path: String,
+        /// Path to the code file
+        #[clap(name = "CODE_FILE")]
+        code_path: String,
+        // Optional load address
+        #[clap(long)]
+        load_address: Option<u32>,
+        // Path to optional data file
+        #[clap(name = "DATA_FILE")]
+        data_path: String,
+        // Optional data load address
+        #[clap(long)]
+        data_load_address: Option<u32>,
+    },
 
+
+}
 
 //
 // CMD header definition 
@@ -185,8 +219,23 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Create { cmd_path, code_path , load_address, data_path, data_load_address} => {
-            create_image(cmd_path, code_path, load_address, data_path, data_load_address)?;
+        Commands::MemoryModel8080 { cmd_path, code_path , load_address} => {
+            println!("MemoryModel8080 {} {} {}",cmd_path,code_path,load_address.unwrap_or(0));
+            println!("Note: code must start at org $100");
+            println!("TODO: Not implemented");
+//            create_image(cmd_path, code_path, load_address, data_path, data_load_address)?;
+        },
+        Commands::MemoryModelSmall { cmd_path, code_path , load_address, data_path, data_load_address} => {
+            println!("MemoryModelSmall {} {} {} {} {}",cmd_path,code_path,load_address.unwrap_or(0),data_path,data_load_address.unwrap_or(0));
+            println!("Note: data must start at org $100");
+            println!("TODO: Not implemented");
+//            create_image(cmd_path, code_path, load_address, data_path, data_load_address)?;
+        },
+        Commands::MemoryModelCompact { cmd_path, code_path , load_address, data_path, data_load_address} => {
+            println!("MemoryModelCompact {} {} {} {} {}",cmd_path,code_path,load_address.unwrap_or(0),data_path,data_load_address.unwrap_or(0));
+            println!("Note: data must start at org $100");
+            println!("TODO: Not implemented");
+//            create_image(cmd_path, code_path, load_address, data_path, data_load_address)?;
         }
     }
 
